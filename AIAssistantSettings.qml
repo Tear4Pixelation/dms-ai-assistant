@@ -75,6 +75,17 @@ Item {
                 maxTokens: 4096,
                 timeout: 30
             };
+        case "ollama":
+            return {
+                baseUrl: "http://localhost:11434",
+                model: "",
+                apiKey: "",
+                saveApiKey: false,
+                apiKeyEnvVar: "",
+                temperature: 0.7,
+                maxTokens: 4096,
+                timeout: 30
+            };
         case "custom":
             return {
                 baseUrl: "https://api.openai.com",
@@ -129,12 +140,13 @@ Item {
             anthropic: normalizedProfile("anthropic", null),
             gemini: normalizedProfile("gemini", null),
             inception: normalizedProfile("inception", null),
+            ollama: normalizedProfile("ollama", null),
             custom: normalizedProfile("custom", null)
         }
         if (!rawProviders || typeof rawProviders !== "object")
             return next
 
-        const ids = ["openai", "anthropic", "gemini", "inception", "custom"]
+        const ids = ["openai", "anthropic", "gemini", "inception", "ollama", "custom"]
         for (let i = 0; i < ids.length; i++) {
             const id = ids[i]
             if (rawProviders[id] && typeof rawProviders[id] === "object") {
@@ -195,7 +207,7 @@ Item {
 
     function load() {
         const selectedProvider = String(PluginService.loadPluginData(pluginId, "provider", "openai")).trim() || "openai"
-        provider = ["openai", "anthropic", "gemini", "inception", "custom"].includes(selectedProvider) ? selectedProvider : "openai"
+        provider = ["openai", "anthropic", "gemini", "inception", "ollama", "custom"].includes(selectedProvider) ? selectedProvider : "openai"
 
         const rawProviders = PluginService.loadPluginData(pluginId, "providers", null)
         let nextProviders = mergedProviders(rawProviders)
@@ -333,7 +345,7 @@ Item {
                                 }
                                 DankDropdown {
                                     width: parent.width
-                                    options: ["openai", "anthropic", "gemini", "inception", "custom"]
+                                    options: ["openai", "anthropic", "gemini", "inception", "ollama", "custom"]
                                     currentValue: root.provider
                                     onValueChanged: value => setProvider(value)
                                 }
@@ -357,11 +369,51 @@ Item {
                                     font.pixelSize: Theme.fontSizeSmall
                                     color: Theme.surfaceVariantText
                                 }
+                                DankDropdown {
+                                    width: parent.width
+                                    visible: root.provider === "ollama" && (aiService.availableModels?.length ?? 0) > 0
+                                    options: aiService.availableModels || []
+                                    currentValue: root.model
+                                    onValueChanged: value => {
+                                        saveActiveField("model", value)
+                                        aiService.setCurrentModel(value)
+                                    }
+                                }
                                 DankTextField {
                                     width: parent.width
+                                    visible: root.provider !== "ollama" || (aiService.availableModels?.length ?? 0) === 0
                                     text: root.model
-                                    placeholderText: "gpt-5.2"
-                                    onEditingFinished: saveActiveField("model", text.trim())
+                                    placeholderText: root.provider === "ollama" ? "llama3.2" : "gpt-5.2"
+                                    onEditingFinished: {
+                                        saveActiveField("model", text.trim())
+                                        if (root.provider === "ollama")
+                                            aiService.setCurrentModel(text.trim())
+                                    }
+                                }
+
+                                RowLayout {
+                                    width: parent.width
+                                    visible: root.provider === "ollama"
+                                    spacing: Theme.spacingM
+
+                                    DankButton {
+                                        text: aiService.modelsLoading ? I18n.tr("Refreshing…") : I18n.tr("Refresh Models")
+                                        iconName: "refresh"
+                                        enabled: !aiService.modelsLoading
+                                        onClicked: aiService.refreshAvailableModels(true)
+                                    }
+
+                                    StyledText {
+                                        Layout.fillWidth: true
+                                        text: aiService.modelsError
+                                            ? I18n.tr(aiService.modelsError)
+                                            : ((aiService.availableModels?.length ?? 0) > 0
+                                                ? I18n.tr("%1 installed model(s) detected.").arg(aiService.availableModels.length)
+                                                : I18n.tr("Model list will be fetched from the local Ollama server."))
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: aiService.modelsError ? Theme.error : Theme.surfaceVariantText
+                                        wrapMode: Text.WordWrap
+                                    }
                                 }
 
                                 StyledText {
@@ -489,12 +541,20 @@ Item {
                                     font.pixelSize: Theme.fontSizeSmall
                                     color: Theme.surfaceVariantText
                                 }
+                                StyledText {
+                                    visible: root.provider === "ollama"
+                                    width: parent.width
+                                    text: I18n.tr("Ollama does not require an API key for the default local server.")
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.surfaceVariantText
+                                    wrapMode: Text.WordWrap
+                                }
                                 DankTextField {
                                     id: apiKeyField
                                     width: parent.width
                                     text: root.saveApiKey ? root.apiKey : aiService.sessionApiKey
                                     echoMode: TextInput.Password
-                                    placeholderText: I18n.tr("Enter API key")
+                                    placeholderText: root.provider === "ollama" ? I18n.tr("Not required for local Ollama") : I18n.tr("Enter API key")
                                     leftIconName: root.saveApiKey ? "lock" : "vpn_key"
                                     onEditingFinished: {
                                         if (root.saveApiKey) {
@@ -514,7 +574,7 @@ Item {
                                 DankTextField {
                                     width: parent.width
                                     text: root.apiKeyEnvVar
-                                    placeholderText: I18n.tr("e.g. OPENAI_API_KEY")
+                                    placeholderText: root.provider === "ollama" ? I18n.tr("Optional override") : I18n.tr("e.g. OPENAI_API_KEY")
                                     leftIconName: "terminal"
                                     onEditingFinished: saveActiveField("apiKeyEnvVar", text.trim())
                                 }

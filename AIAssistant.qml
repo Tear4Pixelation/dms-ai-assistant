@@ -107,7 +107,8 @@ Item {
     function privacyNote() {
         const provider = aiService.provider ?? "openai"
         const baseUrl = aiService.baseUrl ?? ""
-        const isRemote = provider !== "custom" || (!baseUrl.includes("localhost") && !baseUrl.includes("127.0.0.1"))
+        const localCapable = provider === "custom" || provider === "ollama"
+        const isRemote = !localCapable || (!baseUrl.includes("localhost") && !baseUrl.includes("127.0.0.1"))
 
         if (isRemote)
             return I18n.tr("Remote provider (%1): avoid sensitive data.").arg(provider.toUpperCase())
@@ -156,6 +157,19 @@ Item {
                     text: (aiService.provider || "openai").toUpperCase()
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
+                }
+            }
+
+            Item {
+                visible: aiService.provider === "ollama" && (aiService.availableModels?.length ?? 0) > 0
+                Layout.preferredWidth: 190
+                Layout.preferredHeight: 36
+
+                DankDropdown {
+                    anchors.fill: parent
+                    options: aiService.availableModels || []
+                    currentValue: aiService.model
+                    onValueChanged: value => aiService.setCurrentModel(value)
                 }
             }
 

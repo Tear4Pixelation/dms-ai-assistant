@@ -50,6 +50,10 @@ Item {
     property string inceptionReasoningEffort: "medium"
     property bool inceptionReasoningSummary: true
     property bool inceptionReasoningSummaryWait: false
+    property var availableModels: []
+    property bool modelsLoading: false
+    property string modelsError: ""
+    property string modelFetchOutput: ""
 
     readonly property bool debugEnabled: (Quickshell.env("DMS_LOG_LEVEL") || "").toLowerCase() === "debug"
 
@@ -88,6 +92,17 @@ Item {
             return {
                 baseUrl: "https://generativelanguage.googleapis.com",
                 model: "gemini-3-flash-preview",
+                apiKey: "",
+                saveApiKey: false,
+                apiKeyEnvVar: "",
+                temperature: 0.7,
+                maxTokens: 4096,
+                timeout: 30
+            };
+        case "ollama":
+            return {
+                baseUrl: "http://localhost:11434",
+                model: "",
                 apiKey: "",
                 saveApiKey: false,
                 apiKeyEnvVar: "",
@@ -149,13 +164,14 @@ Item {
             anthropic: normalizedProfile("anthropic", null),
             gemini: normalizedProfile("gemini", null),
             inception: normalizedProfile("inception", null),
+            ollama: normalizedProfile("ollama", null),
             custom: normalizedProfile("custom", null)
         };
 
         if (!rawProviders || typeof rawProviders !== "object")
             return base;
 
-        const ids = ["openai", "anthropic", "gemini", "inception", "custom"];
+        const ids = ["openai", "anthropic", "gemini", "inception", "ollama", "custom"];
         for (let i = 0; i < ids.length; i++) {
             const id = ids[i];
             if (rawProviders[id] && typeof rawProviders[id] === "object") {
@@ -180,7 +196,7 @@ Item {
     function loadSettings() {
         suppressConfigChange = true
         const selectedProvider = String(PluginService.loadPluginData(pluginId, "provider", "openai")).trim() || "openai"
-        const providerId = ["openai", "anthropic", "gemini", "inception", "custom"].includes(selectedProvider) ? selectedProvider : "openai"
+        const providerId = ["openai", "anthropic", "gemini", "inception", "ollama", "custom"].includes(selectedProvider) ? selectedProvider : "openai"
         const rawProviders = PluginService.loadPluginData(pluginId, "providers", null)
         let nextProviders = mergedProviders(rawProviders)
 
@@ -219,6 +235,7 @@ Item {
         }
         useMonospace = PluginService.loadPluginData(pluginId, "useMonospace", false)
         suppressConfigChange = false
+        refreshAvailableModels(false)
 
         const currentHash = computeConfigHash();
         if (providerConfigHash !== currentHash)
@@ -381,6 +398,8 @@ Item {
                 return Quickshell.env("DMS_GEMINI_API_KEY") || "";
             case "inception":
                 return Quickshell.env("DMS_INCEPTION_API_KEY") || "";
+            case "ollama":
+                return "";
             case "custom":
                 return Quickshell.env("DMS_CUSTOM_API_KEY") || "";
             default:
@@ -396,6 +415,8 @@ Item {
                 return Quickshell.env("GEMINI_API_KEY") || "";
             case "inception":
                 return Quickshell.env("INCEPTION_API_KEY") || "";
+            case "ollama":
+                return "";
             case "custom":
                 return "";
             default:
@@ -618,13 +639,13 @@ Item {
 
     function buildCurlCommand(payload) {
         const key = resolveApiKey();
-        // Custom provider supports keyless local servers (Ollama, LM Studio, etc.)
-        if (!key && provider !== "custom")
+        // Local/self-hosted providers can be keyless.
+        if (!key && provider !== "custom" && provider !== "ollama")
             return null;
 
         const req = AIApiAdapters.buildRequest(provider, payload, key);
         if (debugEnabled && req) {
-            const redactedUrl = (req.url || "").replace(key, "[REDACTED]");
+            const redactedUrl = key ? (req.url || "").replace(key, "[REDACTED]") : (req.url || "");
             const bodyPreview = (req.body || "");
             console.log("[AIAssistantService] request provider=", provider, "url=", redactedUrl);
             console.log("[AIAssistantService] request body(preview)=", bodyPreview.slice(0, 800));
@@ -650,6 +671,11 @@ Item {
             if (!line)
                 continue;
 
+            if (provider === "ollama") {
+                parseProviderDelta(line);
+                continue;
+            }
+
             if (line === "data: [DONE]" || line === "data:[DONE]") {
                 finalizeStream(activeStreamId);
                 continue;
@@ -673,6 +699,12 @@ Item {
                 if (delta)
                     updateStreamContent(activeStreamId, delta);
                 if (data.stop_reason)
+                    finalizeStream(activeStreamId);
+            } else if (provider === "ollama") {
+                const delta = data.message?.content || "";
+                if (delta)
+                    updateStreamContent(activeStreamId, delta);
+                if (data.done)
                     finalizeStream(activeStreamId);
             } else if (provider === "gemini") {
                 const chunks = Array.isArray(data) ? data : [data];
@@ -757,6 +789,24 @@ Item {
     }
 
     function extractNonStreamingAssistantText(bodyText) {
+        if (provider === "ollama") {
+            const lines = bodyText.split(/\r?\n/);
+            let out = "";
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line)
+                    continue;
+                try {
+                    const chunk = JSON.parse(line);
+                    if (chunk.message?.content)
+                        out += chunk.message.content;
+                } catch (innerErr) {
+                    // ignore malformed lines
+                }
+            }
+            return out;
+        }
+
         try {
             const data = JSON.parse(bodyText);
             if (provider === "anthropic") {
@@ -805,6 +855,104 @@ Item {
                 return m.content;
         }
         return "";
+    }
+
+    function refreshAvailableModels(force) {
+        if (provider !== "ollama") {
+            availableModels = [];
+            modelsLoading = false;
+            modelsError = "";
+            modelFetchOutput = "";
+            return;
+        }
+
+        if (modelsLoading && !force)
+            return;
+
+        modelsLoading = true;
+        modelsError = "";
+        modelFetchOutput = "";
+        modelFetchCollector.lastLength = 0;
+        modelFetcher.command = [
+            "curl",
+            "-sS",
+            "--connect-timeout",
+            "2",
+            "--max-time",
+            "5",
+            AIApiAdapters.normalizeBaseUrl(baseUrl || defaultsForProvider("ollama").baseUrl) + "/api/tags"
+        ];
+        modelFetcher.running = true;
+    }
+
+    function setCurrentModel(nextModel) {
+        const trimmed = String(nextModel || "").trim();
+        if (!trimmed || trimmed === model)
+            return;
+
+        model = trimmed;
+        const nextProviders = Object.assign({}, providers || {});
+        const active = Object.assign({}, nextProviders[provider] || normalizedProfile(provider, null));
+        active.model = trimmed;
+        nextProviders[provider] = normalizedProfile(provider, active);
+        providers = nextProviders;
+        PluginService.savePluginData(pluginId, "providers", nextProviders);
+        syncLegacySnapshot(nextProviders[provider]);
+    }
+
+    Process {
+        id: modelFetcher
+        running: false
+
+        stdout: StdioCollector {
+            id: modelFetchCollector
+            property int lastLength: 0
+
+            onTextChanged: {
+                const current = text || "";
+                if (current.length < lastLength)
+                    lastLength = 0;
+                root.modelFetchOutput += current.substring(lastLength);
+                lastLength = current.length;
+            }
+        }
+
+        onExited: exitCode => {
+            modelsLoading = false;
+
+            if (provider !== "ollama")
+                return;
+
+            if (exitCode !== 0) {
+                availableModels = [];
+                modelsError = "Unable to load installed Ollama models.";
+                return;
+            }
+
+            try {
+                const parsed = JSON.parse(modelFetchOutput || "{}");
+                const rawModels = Array.isArray(parsed.models) ? parsed.models : [];
+                const names = [];
+                const seen = {};
+
+                for (let i = 0; i < rawModels.length; i++) {
+                    const name = String(rawModels[i]?.name || "").trim();
+                    if (!name || seen[name])
+                        continue;
+                    seen[name] = true;
+                    names.push(name);
+                }
+
+                availableModels = names;
+                modelsError = names.length > 0 ? "" : "No Ollama models found.";
+
+                if (names.length > 0 && names.indexOf(model) === -1)
+                    setCurrentModel(names[0]);
+            } catch (e) {
+                availableModels = [];
+                modelsError = "Unable to parse Ollama model list.";
+            }
+        }
     }
 
     Process {

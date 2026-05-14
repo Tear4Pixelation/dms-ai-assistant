@@ -1,6 +1,6 @@
 // QML JS library (not an ES module).
 // Provider adapters for building curl commands.
-// v1 supports OpenAI-compatible, Anthropic, and Gemini streaming.
+// v1 supports OpenAI-compatible, Anthropic, Gemini, and Ollama streaming.
 // "custom" currently follows OpenAI-compatible semantics.
 
 .pragma library
@@ -55,6 +55,8 @@ function buildRequest(provider, payload, apiKey) {
         return geminiRequest(payload, apiKey);
     case "inception":
         return inceptionRequest(payload, apiKey);
+    case "ollama":
+        return ollamaRequest(payload);
     case "custom":
         return customRequest(payload, apiKey);
     default:
@@ -142,4 +144,22 @@ function geminiRequest(payload, apiKey) {
 function customRequest(payload, apiKey) {
     // v1 fallback: treat as OpenAI-compatible.
     return openaiRequest(payload, apiKey);
+}
+
+function ollamaRequest(payload) {
+    const url = normalizeBaseUrl(payload.baseUrl || "http://localhost:11434") + "/api/chat";
+    const body = {
+        model: payload.model,
+        messages: payload.messages,
+        stream: true,
+        options: {
+            temperature: payload.temperature || 0.7,
+            num_predict: payload.max_tokens || 1024
+        }
+    };
+    return {
+        url,
+        headers: ["-H", "Content-Type: application/json"],
+        body: JSON.stringify(body)
+    };
 }

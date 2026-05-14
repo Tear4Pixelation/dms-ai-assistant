@@ -4,8 +4,9 @@ An integrated AI chat assistant plugin for DankMaterialShell with support for mu
 
 ## Features
 
-- **Multiple AI Provider Support**: OpenAI, Anthropic, Google Gemini, and custom OpenAI-compatible APIs
+- **Multiple AI Provider Support**: OpenAI, Anthropic, Google Gemini, Ollama, Inception, and custom OpenAI-compatible APIs
 - **Inception Platform Support**: Inception’s OpenAI-compatible streaming API
+- **Ollama Model Discovery**: Detect installed local Ollama models and switch between them from settings or the chat header
 - **Streaming Responses**: Real-time streaming of AI responses with proper cancellation support
 - **Markdown Rendering**: Full markdown support with syntax highlighting for code blocks
 - **Persistent Chat History**: Conversations are saved and restored across sessions
@@ -61,6 +62,15 @@ The plugin supports multiple AI providers. Configure your preferred provider in 
 > - [Anthropic Models](https://docs.anthropic.com/en/docs/about-claude/models)
 > - [Google Gemini Models](https://ai.google.dev/gemini-api/docs/models)
 
+#### Ollama
+
+```
+Provider: ollama
+Base URL: http://localhost:11434
+Model: Selected from installed local models
+API Key: Not required
+```
+
 #### OpenAI
 
 ```
@@ -100,7 +110,7 @@ Mercury 2 options (see [API parameters](https://docs.inceptionlabs.ai/get-starte
 
 #### Custom Provider
 
-For any OpenAI-compatible API (LocalAI, Ollama, LM Studio, etc.):
+For any OpenAI-compatible API (LocalAI, LM Studio, vLLM, etc.):
 
 ```
 Provider: custom
