@@ -70,7 +70,6 @@ function openaiRequest(payload, apiKey, maxTokenParam = "max_completion_tokens")
     const body = {
         model: payload.model,
         messages: payload.messages,
-        temperature: payload.temperature || 0.7,
         stream: true
     };
     body[maxTokenParam] = payload.max_tokens || 1024;
