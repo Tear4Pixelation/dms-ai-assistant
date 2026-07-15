@@ -91,7 +91,7 @@ Item {
         case "custom":
             return {
                 baseUrl: "https://api.openai.com",
-                model: "gpt-5.2",
+                model: "chat-latest",
                 apiKey: "",
                 saveApiKey: false,
                 apiKeyEnvVar: "",
@@ -102,7 +102,7 @@ Item {
         default:
             return {
                 baseUrl: "https://api.openai.com",
-                model: "gpt-5.2",
+                model: "chat-latest",
                 apiKey: "",
                 saveApiKey: false,
                 apiKeyEnvVar: "",
